@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -24,6 +25,7 @@ import (
 // WmiCollector implements the prometheus.Collector interface.
 type WmiCollector struct {
 	collectors map[string]collector.Collector
+	context    context.Context
 }
 
 const (
@@ -236,11 +238,20 @@ func main() {
 
 	log.Infof("Enabled collectors: %v", strings.Join(keys(collectors), ", "))
 
-	nodeCollector := WmiCollector{collectors: collectors}
-	prometheus.MustRegister(nodeCollector)
-
-	http.Handle(*metricsPath, promhttp.Handler())
+	http.Handle("/metrics", promhttp.Handler()) 
 	http.HandleFunc("/health", healthCheck)
+	http.HandleFunc(*metricsPath, func(w http.ResponseWriter, r *http.Request) {
+
+		reg := prometheus.NewRegistry()
+		reg.MustRegister(prometheus.NewGoCollector())
+		reg.MustRegister(WmiCollector{
+			context: r.Context(),
+			collectors: collectors,
+		})
+
+		h := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+		h.ServeHTTP(w, r)
+	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, *metricsPath, http.StatusMovedPermanently)
 	})
